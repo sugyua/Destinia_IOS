@@ -17,9 +17,23 @@ Projeto independente que encapsula a implementação Web/WASM do [Destinia para 
 
 **Limites da versão 0.1 experimental:** a jogabilidade, o FPS, o áudio, o suporte a gamepad e o restauro real de saves em iPhone ainda não foram confirmados. O port Web anterior documenta áudio desativado; este projeto **não adiciona áudio nativo**. O jogo precisa ser salvo pelos comandos do próprio Destinia; fechar o app sem salvar ainda pode perder o progresso recente. Um novo app instalado com outro identificador/conta pode perder acesso aos saves antigos. Não desinstale sem backup.
 
+## Fonte AltStore Classic (metadados públicos)
+
+A fonte [source.json](source.json) foi criada no repositório público e pode ser adicionada ao AltStore Classic pelo endereço:
+
+```text
+https://raw.githubusercontent.com/sugyua/Destinia_IOS/main/source.json
+```
+
+**Situação:** a fonte atualmente não lista nenhum aplicativo, pois ainda não existe um `downloadURL` público, estável e autorizado para um IPA do Destinia. O arquivo da compilação antiga do GitHub Actions não é um endereço de download direto e permanente. Não apresentar um link hipotético como se houvesse um jogo instalável.
+
+**Atenção aos direitos autorais:** o IPA inclui código e recursos originais da GAMEVIL/Everple. A fonte pública não distribui esses arquivos, e o workflow existente impede compilar esses recursos em um repositório público. Tornar o repositório público não equivale a ter autorização para distribuir os conteúdos do jogo. Para uso exclusivamente pessoal, mantenha a compilação/distribuição do IPA em ambiente privado e faça a instalação pela sua própria conta Apple.
+
+Quando houver um IPA que possa ser legitimamente disponibilizado com URL HTTPS estável, a fonte pode ganhar o registro do app com `bundleIdentifier`, `iconURL`, `versions`, `downloadURL`, `size` e informações de permissões compatíveis com o formato oficial da AltStore.
+
 ## Atualizações automáticas e compilação manual
 
-Repositório iOS **privado**: [sugyua/Destinia_IOS](https://github.com/sugyua/Destinia_IOS).
+Repositório iOS **atualmente público**: [sugyua/Destinia_IOS](https://github.com/sugyua/Destinia_IOS).
 
 - **Manual**: abra [Actions](https://github.com/sugyua/Destinia_IOS/actions), escolha **Compilar Destinia iOS (IPA pessoal, sem assinatura)** e clique em **Run workflow**. Sempre busca a última revisão da `main` do repositório do PC, mesmo que ela não tenha mudado.
 - **Automática**: todos os dias, às **08:15 (horário de Brasília, UTC-3)**, o GitHub verifica a revisão da `main` do PC. Se for igual à última fonte compilada com sucesso, o job macOS não é executado. Se mudou, tenta construir um novo IPA. O GitHub pode atrasar o início dos agendamentos.
