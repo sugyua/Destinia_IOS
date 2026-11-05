@@ -1,0 +1,80 @@
+name: Compilar Destinia iOS (IPA pessoal, sem assinatura)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - name: Impedir build de assets proprietários em repositório público
+        env:
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [ "$REPO_PRIVATE" != "true" ]; then
+            echo "ERRO: coloque este projeto em repositório GitHub privado antes de executar." >&2
+            exit 1
+          fi
+
+      - name: Checkout do projeto iOS privado
+        uses: actions/checkout@v4
+
+      - name: Obter fontes da versão Windows/Web (somente leitura)
+        run: |
+          git clone --filter=blob:none --no-checkout https://github.com/sugyua/destinia.git upstream
+          git -C upstream fetch --depth 1 origin 3410901fe980497d7cab8283af50dc65ea26a73d
+          git -C upstream checkout --detach FETCH_HEAD
+          test "$(git -C upstream rev-parse HEAD)" = "3410901fe980497d7cab8283af50dc65ea26a73d"
+          git -C upstream rev-parse HEAD
+
+      - name: Preparar jogo offline com os assets originais
+        run: |
+          python3 scripts/prepare_web.py --repo upstream
+          python3 scripts/check_prepared.py
+
+      - name: Verificar ferramenta de projeto
+        run: |
+          if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
+          xcodegen --version
+          xcodebuild -version
+
+      - name: Gerar projeto Xcode
+        run: xcodegen generate --spec project.yml
+
+      - name: Compilar para iPhone ARM64 sem assinatura
+        run: |
+          set -o pipefail
+          xcodebuild -project DestiniaIOS.xcodeproj \
+            -scheme DestiniaIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/build" \
+            ARCHS=arm64 \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Montar IPA não assinado
+        run: |
+          set -e
+          test -d build/Build/Products/Release-iphoneos/DestiniaIOS.app
+          mkdir -p artifacts/Payload
+          ditto build/Build/Products/Release-iphoneos/DestiniaIOS.app artifacts/Payload/DestiniaIOS.app
+          (cd artifacts && zip -q -r Destinia-iOS-unsigned.ipa Payload)
+          (cd artifacts && shasum -a 256 Destinia-iOS-unsigned.ipa > SHA256SUMS.txt)
+          test -s artifacts/Destinia-iOS-unsigned.ipa
+
+      - name: Disponibilizar somente como artefato da execução
+        uses: actions/upload-artifact@v4
+        with:
+          name: Destinia-iOS-unsigned
+          path: |
+            artifacts/Destinia-iOS-unsigned.ipa
+            artifacts/SHA256SUMS.txt
+          retention-days: 7
+          if-no-files-found: error

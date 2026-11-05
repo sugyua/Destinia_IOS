@@ -1,0 +1,10 @@
+.DS_Store
+build/
+DerivedData/
+DestiniaIOS.xcodeproj/
+Web/*
+!Web/.keep
+artifacts/
+upstream/
+*.ipa
+*.xcarchive
