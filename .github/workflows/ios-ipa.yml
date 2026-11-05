@@ -2,41 +2,131 @@ name: Compilar Destinia iOS (IPA pessoal, sem assinatura)
 
 on:
   workflow_dispatch:
+  schedule:
+    # 08:15 (Brasília), diariamente. GitHub Actions pode atrasar o início.
+    - cron: '15 11 * * *'
 
-permissions:
-  contents: read
+concurrency:
+  group: destinia-ios-build
+  cancel-in-progress: false
 
 jobs:
-  build:
-    runs-on: macos-latest
-    timeout-minutes: 45
+  verificar:
+    name: Verificar nova versão do Destinia
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      short_sha: ${{ steps.source.outputs.short_sha }}
+      should_build: ${{ steps.source.outputs.should_build }}
     steps:
-      - name: Impedir build de assets proprietários em repositório público
+      - name: Exigir repositório iOS privado
         env:
-          REPO_PRIVATE: ${{ github.event.repository.private }}
+          IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
-          if [ "$REPO_PRIVATE" != "true" ]; then
-            echo "ERRO: coloque este projeto em repositório GitHub privado antes de executar." >&2
+          test "$IS_PRIVATE" = "true" || { echo "O projeto iOS deve permanecer privado." >&2; exit 1; }
+
+      - name: Checkout sem credenciais persistentes
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Comparar revisão mais recente com último IPA
+        id: source
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git ls-remote https://github.com/sugyua/destinia.git refs/heads/main | awk '{print $1}')"
+          if [[ ! "$sha" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Não foi possível consultar o commit de origem." >&2
             exit 1
           fi
+          previous="$(tr -d '[:space:]' < .github/last-successful-source.txt)"
+          if [[ ! "$previous" =~ ^[a-f0-9]{40}$ ]]; then
+            echo "Marcador da última compilação inválido." >&2
+            exit 1
+          fi
+          should_build=true
+          if [[ "$EVENT_NAME" == "schedule" && "$sha" == "$previous" ]]; then
+            should_build=false
+          fi
+          echo "source_sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${sha:0:8}" >> "$GITHUB_OUTPUT"
+          echo "should_build=$should_build" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Atualizações Destinia iOS"
+            echo "Fonte atual: \`$sha\`"
+            echo "Última fonte compilada: \`$previous\`"
+            echo "Execução: $EVENT_NAME"
+            if [[ "$should_build" == "true" ]]; then
+              echo "Resultado: compilar a versão mais recente."
+            else
+              echo "Resultado: nenhuma alteração nova; build macOS dispensado."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Checkout do projeto iOS privado
+  build:
+    name: Compilar IPA privado (arm64)
+    needs: verificar
+    if: ${{ needs.verificar.outputs.should_build == 'true' && github.event.repository.private == true }}
+    runs-on: macos-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      SOURCE_SHA: ${{ needs.verificar.outputs.source_sha }}
+    steps:
+      - name: Checkout privado
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Obter fontes da versão Windows/Web (somente leitura)
+      - name: Buscar versão atual do PC e Web sem alterar o original
+        shell: bash
         run: |
+          set -euo pipefail
           git clone --filter=blob:none --no-checkout https://github.com/sugyua/destinia.git upstream
-          git -C upstream fetch --depth 1 origin 3410901fe980497d7cab8283af50dc65ea26a73d
+          git -C upstream fetch --depth 1 origin "$SOURCE_SHA"
           git -C upstream checkout --detach FETCH_HEAD
-          test "$(git -C upstream rev-parse HEAD)" = "3410901fe980497d7cab8283af50dc65ea26a73d"
-          git -C upstream rev-parse HEAD
+          test "$(git -C upstream rev-parse HEAD)" = "$SOURCE_SHA"
 
-      - name: Preparar jogo offline com os assets originais
+      - name: Testar adaptadores e preparar os recursos offline
+        shell: bash
         run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
           python3 scripts/prepare_web.py --repo upstream
           python3 scripts/check_prepared.py
 
-      - name: Verificar ferramenta de projeto
+      - name: Atualizar versão e número do IPA
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os, re
+          version = Path("upstream/VERSION").read_text(encoding="utf-8").strip()
+          if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
+              raise SystemExit(f"VERSION inválida: {version!r}")
+          number = os.environ["GITHUB_RUN_NUMBER"]
+          if not number.isdigit() or int(number) < 1:
+              raise SystemExit("Número do build inválido")
+          path = Path("project.yml")
+          spec = path.read_text(encoding="utf-8")
+          for field, value in (("CFBundleShortVersionString", version), ("CFBundleVersion", number)):
+              pattern = rf'(?m)^(\s{{8}}{field}:\s*)(?:"[^"]*"|[^\n]+)$'
+              spec, count = re.subn(pattern, lambda m: m.group(1) + f'"{value}"', spec)
+              if count != 1:
+                  raise SystemExit(f"Campo {field} não encontrado exatamente uma vez")
+          path.write_text(spec, encoding="utf-8")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as handle:
+              handle.write(f"APP_VERSION={version}\n")
+          print(f"Versão iOS: {version}; compilação {number}")
+          PY
+
+      - name: Conferir XcodeGen e Xcode
         run: |
           if ! command -v xcodegen >/dev/null 2>&1; then brew install xcodegen; fi
           xcodegen --version
@@ -45,7 +135,8 @@ jobs:
       - name: Gerar projeto Xcode
         run: xcodegen generate --spec project.yml
 
-      - name: Compilar para iPhone ARM64 sem assinatura
+      - name: Compilar ARM64 sem assinatura
+        shell: bash
         run: |
           set -o pipefail
           xcodebuild -project DestiniaIOS.xcodeproj \
@@ -59,22 +150,61 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             build
 
-      - name: Montar IPA não assinado
+      - name: Empacotar IPA e dados da revisão
+        shell: bash
         run: |
-          set -e
+          set -euo pipefail
           test -d build/Build/Products/Release-iphoneos/DestiniaIOS.app
           mkdir -p artifacts/Payload
           ditto build/Build/Products/Release-iphoneos/DestiniaIOS.app artifacts/Payload/DestiniaIOS.app
           (cd artifacts && zip -q -r Destinia-iOS-unsigned.ipa Payload)
           (cd artifacts && shasum -a 256 Destinia-iOS-unsigned.ipa > SHA256SUMS.txt)
+          {
+            echo "Destinia iOS experimental - uso pessoal"
+            echo "Fonte: sugyua/destinia"
+            echo "Commit: $SOURCE_SHA"
+            echo "Versão PC/Web: $APP_VERSION"
+            echo "Build iOS: $GITHUB_RUN_NUMBER"
+            echo "Bundle ID: br.sugyua.destinia.private"
+            echo "Jogabilidade iPhone: ainda requer validação física"
+          } > artifacts/BUILD_INFO.txt
           test -s artifacts/Destinia-iOS-unsigned.ipa
 
-      - name: Disponibilizar somente como artefato da execução
+      - name: Publicar artefato somente no repositório privado
         uses: actions/upload-artifact@v4
         with:
-          name: Destinia-iOS-unsigned
+          name: Destinia-iOS-unsigned-${{ needs.verificar.outputs.short_sha }}
           path: |
             artifacts/Destinia-iOS-unsigned.ipa
             artifacts/SHA256SUMS.txt
-          retention-days: 7
+            artifacts/BUILD_INFO.txt
+          retention-days: 30
           if-no-files-found: error
+
+  registrar:
+    name: Registrar a última revisão compilada com sucesso
+    needs: [verificar, build]
+    if: ${{ needs.build.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      SOURCE_SHA: ${{ needs.verificar.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Persistir controle de atualização
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch origin main
+          git merge --ff-only origin/main
+          printf '%s\n' "$SOURCE_SHA" > .github/last-successful-source.txt
+          if git diff --quiet -- .github/last-successful-source.txt; then
+            echo "Última revisão já registrada."
+            exit 0
+          fi
+          git add .github/last-successful-source.txt
+          git commit -m "CI: registrar IPA da fonte ${SOURCE_SHA:0:8} [skip ci]"
+          git push origin HEAD:main
