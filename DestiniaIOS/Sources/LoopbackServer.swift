@@ -21,8 +21,13 @@ final class LoopbackServer {
         self.savesRoot = documentDirectory.appendingPathComponent("DestiniaSaves", isDirectory: true)
         try FileManager.default.createDirectory(at: savesRoot, withIntermediateDirectories: true)
 
+        // A porta já é informada ao NWListener. Definir também
+        // requiredLocalEndpoint com a mesma porta pode resultar em EINVAL (22)
+        // durante a criação do listener em dispositivos iOS reais.
+        // Restringimos a interface a loopback sem vincular o endpoint duas vezes.
         let parameters = NWParameters.tcp
-        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port)!)
+        parameters.requiredInterfaceType = .loopback
+        parameters.acceptLocalOnly = true
         listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
     }
 
