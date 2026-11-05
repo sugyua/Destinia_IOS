@@ -1,10 +1,7 @@
-name: Compilar Destinia iOS (IPA pessoal, sem assinatura)
+name: Antigo build iOS - usar repositorio privado
 
 on:
   workflow_dispatch:
-  schedule:
-    # 08:15 (Brasília), diariamente. GitHub Actions pode atrasar o início.
-    - cron: '15 11 * * *'
 
 concurrency:
   group: destinia-ios-build
@@ -25,7 +22,7 @@ jobs:
         env:
           IS_PRIVATE: ${{ github.event.repository.private }}
         run: |
-          test "$IS_PRIVATE" = "true" || { echo "O projeto iOS deve permanecer privado." >&2; exit 1; }
+          test "$IS_PRIVATE" = "true" || { echo "Este repositorio e PUBLICO: use sugyua/Destinia_iOS_Builds (privado) para gerar o IPA." >&2; exit 1; }
 
       - name: Checkout sem credenciais persistentes
         uses: actions/checkout@v4
