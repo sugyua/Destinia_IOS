@@ -1,0 +1,39 @@
+name: Importar fontes do Destinia iOS
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bootstrap/package.part4.b64'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  importar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Conferir e extrair fontes privadas do projeto
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/package.part{1,2,3,4}.b64 | base64 --decode > /tmp/destinia-ios-src.tar.xz
+          echo 'e73f316de6470d312593b6c7f636d46937f161659293c323b1fba6b16aaca40a  /tmp/destinia-ios-src.tar.xz' | sha256sum -c -
+          tar -tf /tmp/destinia-ios-src.tar.xz | grep -vE '^(/|\.\./|.*\/\.\./)' >/tmp/files.txt
+          test "$(wc -l </tmp/files.txt)" -eq 14
+          tar -xJf /tmp/destinia-ios-src.tar.xz -C .
+          test -s scripts/prepare_web.py
+          test -s DestiniaIOS/Sources/LoopbackServer.swift
+          test -s .github/workflows/ios-ipa.yml
+      - name: Enviar fontes separados para main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm -r bootstrap
+          git rm .github/workflows/importar-projeto.yml
+          git add -A
+          git commit -m 'Importar fontes Destinia iOS 0.1 (sem dados do jogo)'
+          git push origin HEAD:main
