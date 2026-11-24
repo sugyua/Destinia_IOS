@@ -201,8 +201,16 @@ final class LoopbackServer {
         default: reason = "Internal Server Error"
         }
         let headers = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(contentType)\r\nContent-Length: \(body.count)\r\nConnection: close\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\n\r\n"
-        var payload = Data(headers.utf8)
-        payload.append(body)
-        connection.send(content: payload, completion: .contentProcessed { _ in connection.cancel() })
+        let headerData = Data(headers.utf8)
+        guard !body.isEmpty else {
+            connection.send(content: headerData, completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        connection.batch {
+            connection.send(content: headerData, completion: .contentProcessed { error in
+                if error != nil { connection.cancel() }
+            })
+            connection.send(content: body, completion: .contentProcessed { _ in connection.cancel() })
+        }
     }
 }
